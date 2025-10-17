@@ -22,7 +22,7 @@ namespace {
     // std::unordered_set<BasicBlock*> Visited;
 
     bool Changed;
-    std::vector<BasicBlock*> UsedInstruction;
+    std::vector<BasicBlock*> UsedBB;
 
     bool SafeToSink(Instruction *I){
       if (I->isTerminator() || isa<PHINode>(I) || isa<AllocaInst>(I) || isa<CallInst>(I)){
@@ -111,7 +111,7 @@ namespace {
     // }
     
 
-    // Vraca niz BB-ova gde se ova Irukcija koristi
+    // Vraca niz BB-ova gde se ova Instrukcija koristi
     void getUsedBlocks(Instruction *I){
       std::unordered_set<BasicBlock*> exists;
 
@@ -121,10 +121,10 @@ namespace {
         if(Instruction *UI = dyn_cast<Instruction>(U)){
           // uzimamo BB u kojem se nalazi
           BasicBlock *BB = UI->getParent();
-          bool usedInSet = exists.insert(BB).second;
-          // ako postoji u setu znaci da se koristi
-          if(usedInSet){
-            UsedInstruction.push_back(BB);
+          auto it = std::find(exists.begin(), exists.end(), BB);
+          if(it == exists.end()){
+            exists.insert(BB);
+            UsedBB.push_back(BB);
           }
         }
       }
@@ -176,23 +176,20 @@ namespace {
       // moramo prvo unazad da iteriramo zbog zavisnosti Irukcija
       reverseVector(&InstructionToSink);
       for(Instruction *I : InstructionToSink){
-        if(!SafeToSink(I)){
-          continue;
-        }
 
         // dobijamo sve blokove gde se ova instrukcija koristi
-        UsedInstruction.clear();
+        UsedBB.clear();
         getUsedBlocks(I);
 
         // ako se nigde ne koristi
-        if(UsedInstruction.empty()){
+        if(UsedBB.empty()){
           continue;
         }
 
 
         // nema smisla sinkovati ako se vec koristi u parent blocku.
         bool usesInParentBB = false;
-        for (BasicBlock *UseBB : UsedInstruction){
+        for (BasicBlock *UseBB : UsedBB){
           if (UseBB == BB){
             usesInParentBB = true;
             break;
@@ -204,12 +201,12 @@ namespace {
         }
 
         // nema smisla raditi to ako imamo previse koriscenja.
-        if(UsedInstruction.size() >= 3){
+        if(UsedBB.size() >= 3){
           continue;
         }
 
-        if(UsedInstruction.size() == 1){
-          BasicBlock *ToMoveBB = UsedInstruction[0];
+        if(UsedBB.size() == 1){
+          BasicBlock *ToMoveBB = UsedBB[0];
           Instruction *InsertBefore = findInsertionPoint(I, ToMoveBB);
   
           if (!InsertBefore) {
@@ -221,11 +218,11 @@ namespace {
           sinked = true;
 
         }else{
-          size_t n = UsedInstruction.size();
+          size_t n = UsedBB.size();
           // Kopiramo na sva mesta osim zadnjeg
           for (size_t i = 0; i < n-1; i++){
 
-            BasicBlock *ToMoveBB = UsedInstruction[i];
+            BasicBlock *ToMoveBB = UsedBB[i];
             Instruction *Clone = I->clone();
             
             Instruction *InsertBefore = findInsertionPoint(I, ToMoveBB);
@@ -245,7 +242,7 @@ namespace {
             }
           }
 
-          BasicBlock *LastTarget = UsedInstruction.back();
+          BasicBlock *LastTarget = UsedBB.back();
           Instruction *InsertPoint = findInsertionPoint(I, LastTarget);
 
           if (!InsertPoint){
