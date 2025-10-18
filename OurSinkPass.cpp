@@ -22,7 +22,8 @@ namespace {
     // std::unordered_set<BasicBlock*> Visited;
 
     bool Changed;
-    std::vector<BasicBlock*> UsedBB;
+    // BB u kojima se pojavljuje instrukcija
+    std::vector<BasicBlock*> Occurencess;
 
     bool SafeToSink(Instruction *I){
       if (I->isTerminator() || isa<PHINode>(I) || isa<AllocaInst>(I) || isa<CallInst>(I)){
@@ -124,7 +125,7 @@ namespace {
           auto it = std::find(exists.begin(), exists.end(), BB);
           if(it == exists.end()){
             exists.insert(BB);
-            UsedBB.push_back(BB);
+            Occurencess.push_back(BB);
           }
         }
       }
@@ -164,32 +165,32 @@ namespace {
     bool sinking(BasicBlock *BB){
       bool sinked = false;
 
-      std::vector<Instruction*> InstructionToSink;
+      std::vector<Instruction*> InstructionsToSink;
       for(Instruction &I : *BB){
         // ne mozemo sinkovati phi br i ostale.
         if(SafeToSink(&I)){
-          InstructionToSink.push_back(&I);
+          InstructionsToSink.push_back(&I);
         }
       }
 
       // GRESKA
       // moramo prvo unazad da iteriramo zbog zavisnosti Irukcija
-      reverseVector(&InstructionToSink);
-      for(Instruction *I : InstructionToSink){
+      reverseVector(&InstructionsToSink);
+      for(Instruction *I : InstructionsToSink){
 
         // dobijamo sve blokove gde se ova instrukcija koristi
-        UsedBB.clear();
+        Occurencess.clear();
         getUsedBlocks(I);
 
         // ako se nigde ne koristi
-        if(UsedBB.empty()){
+        if(Occurencess.empty()){
           continue;
         }
 
 
         // nema smisla sinkovati ako se vec koristi u parent blocku.
         bool usesInParentBB = false;
-        for (BasicBlock *UseBB : UsedBB){
+        for (BasicBlock *UseBB : Occurencess){
           if (UseBB == BB){
             usesInParentBB = true;
             break;
@@ -201,12 +202,12 @@ namespace {
         }
 
         // nema smisla raditi to ako imamo previse koriscenja.
-        if(UsedBB.size() >= 3){
+        if(Occurencess.size() > 3){
           continue;
         }
 
-        if(UsedBB.size() == 1){
-          BasicBlock *ToMoveBB = UsedBB[0];
+        if(Occurencess.size() == 1){
+          BasicBlock *ToMoveBB = Occurencess[0];
           Instruction *InsertBefore = findInsertionPoint(I, ToMoveBB);
   
           if (!InsertBefore) {
@@ -218,19 +219,20 @@ namespace {
           sinked = true;
 
         }else{
-          size_t n = UsedBB.size();
+          size_t n = Occurencess.size();
           // Kopiramo na sva mesta osim zadnjeg
           for (size_t i = 0; i < n-1; i++){
 
-            BasicBlock *ToMoveBB = UsedBB[i];
+            BasicBlock *ToMoveBB = Occurencess[i];
             Instruction *Clone = I->clone();
             
             Instruction *InsertBefore = findInsertionPoint(I, ToMoveBB);
             if (!InsertBefore){
               InsertBefore = ToMoveBB->getTerminator();
             }
-            Clone->insertBefore(InsertBefore);
+            
             Clone->setName(I->getName());
+            Clone->insertBefore(InsertBefore);
             
             // zamenimo sva koriscenja u ovom bloku sa kopijom
             for (User *U : I->users()){
@@ -242,7 +244,7 @@ namespace {
             }
           }
 
-          BasicBlock *LastTarget = UsedBB.back();
+          BasicBlock *LastTarget = Occurencess.back();
           Instruction *InsertPoint = findInsertionPoint(I, LastTarget);
 
           if (!InsertPoint){
